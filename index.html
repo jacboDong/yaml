@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebAuthn Registration</title>
+</head>
+<body>
+    <h1>Register with Passkey</h1>
+    <button id="registerButton">binding</button>
+    <button id="loginButton">login</button>
+    <script>
+        const base64url = {
+        encode: function(buffer) {
+            const base64 = window.btoa(String.fromCharCode(...new Uint8Array(buffer)));
+            return base64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+        },
+        decode: function(base64url) {
+            const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+            const binStr = window.atob(base64);
+            const bin = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) {
+            bin[i] = binStr.charCodeAt(i);
+            }
+            return bin.buffer;
+        }
+        }
+        document.getElementById('registerButton').addEventListener('click', async () => {
+            const response = await fetch('/webauthn/register', { method: 'POST' });
+            const body = await response.json();
+
+            let options = body.publicKey;
+
+            options.user.id = base64url.decode(options.user.id);
+            options.challenge = base64url.decode(options.challenge);
+
+            if (options.excludeCredentials) {
+                for (let cred of options.excludeCredentials) {
+                    cred.id = base64url.decode(cred.id);
+                }
+            }
+            
+            // Call WebAuthn API
+            const cred = await navigator.credentials.create({
+                publicKey: options
+            });
+
+            const credential = {};
+            credential.id = cred.id;
+            // Base64URL encode `rawId`
+            credential.rawId = base64url.encode(cred.rawId);
+            credential.type = cred.type;
+
+            // `authenticatorAttachment` in PublicKeyCredential is a new addition in WebAuthn L3
+            if (cred.authenticatorAttachment) {
+                credential.authenticatorAttachment = cred.authenticatorAttachment;
+            }
+
+            // Base64URL encode some values
+            const clientDataJSON = base64url.encode(cred.response.clientDataJSON);
+            const attestationObject = base64url.encode(cred.response.attestationObject);
+
+            // Obtain transports if they are available.
+            const transports = cred.response.getTransports ? cred.response.getTransports() : [];
+
+            credential.response = {
+                clientDataJSON,
+                attestationObject,
+                transports
+            };
+
+            const res = await fetch('/webauthn/register/finish', {
+                method: 'POST',
+                body: JSON.stringify(credential),
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (res.status === 200) {
+                // Server authentication succeeded
+                alert('Registration successful!');
+                console.log(res.text());
+            } else {
+                // Server authentication failed
+                const result = await res.json();
+                alert(result.error);
+            }
+        });
+
+        document.getElementById("loginButton").addEventListener("click", async () => {
+            const conditional = true;
+            const response = await fetch('/webauthn/login', { method: 'POST' });
+            const body = await response.json();
+
+            let options = body.publicKey;
+            // Base64URL decode the challenge
+            options.challenge = base64url.decode(options.challenge);
+
+            // `allowCredentials` empty array invokes an account selector by discoverable credentials.
+            options.allowCredentials = [];
+
+            // Invoke WebAuthn get
+            const cred = await navigator.credentials.get({
+                publicKey: options,
+                // Request a conditional UI
+                mediation: conditional ? 'conditional' : 'optional'
+            });
+
+            const credential = {};
+            credential.id = cred.id;
+            credential.type = cred.type;
+            // Base64URL encode `rawId`
+            credential.rawId = base64url.encode(cred.rawId);
+
+            // Base64URL encode some values
+            const clientDataJSON = base64url.encode(cred.response.clientDataJSON);
+            const authenticatorData = base64url.encode(cred.response.authenticatorData);
+            const signature = base64url.encode(cred.response.signature);
+            const userHandle = base64url.encode(cred.response.userHandle);
+
+            credential.response = {
+                clientDataJSON,
+                authenticatorData,
+                signature,
+                userHandle,
+            };
+
+            const res = await fetch('/webauthn/login/finish', {
+                method: 'POST',
+                body: JSON.stringify(credential),
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (res.status === 200) {
+                // Server authentication succeeded
+                alert('Login successful!');
+                console.log(res.json());
+            } else {
+                // Server authentication failed
+                const result = await res.json();
+                alert(result.error);
+            }
+        })
+
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+    </script>
+</body>
+</html>
